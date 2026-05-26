@@ -96,4 +96,12 @@ networks:
     external: true
 ```
 
+To use HTTP only (no TLS, no CA cert required on clients), prefix the domain with `http://` and omit the `caddy.tls` label:
+
+```yaml
+labels:
+  caddy: http://my-service.crest.internal
+  caddy.reverse_proxy: "{{upstreams <port>}}"
+```
+
 Caddy picks up the new route automatically when the container starts — no reload needed.

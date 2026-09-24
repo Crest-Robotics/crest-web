@@ -1,0 +1,17 @@
+services:
+  caddy:
+    image: lucaslorentz/caddy-docker-proxy:ci-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - caddy-data:/data
+    networks:
+      - crest-web
+    labels:
+      caddy.email: alex@crestrobotics.co
+
+volumes:
+  caddy-data:

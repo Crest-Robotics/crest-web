@@ -1,0 +1,23 @@
+services:
+  registry:
+    image: registry:3
+    restart: unless-stopped
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_HTTP_RELATIVEURLS: "true"
+    volumes:
+      - ${REGISTRY_DATA_DIR:?set in .env}:/var/lib/registry
+    networks:
+      - crest-web
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/v2/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # List form, not a map: Compose doesn't interpolate map keys, and the
+    # basic_auth username lives in the key.
+    labels:
+      - caddy=registry.crest.internal
+      - caddy.reverse_proxy={{upstreams 5000}}
+      - caddy.tls=internal
+      - caddy.basic_auth.${REGISTRY_USER:?set in .env}=${REGISTRY_PASSWORD_HASH:?set in .env}

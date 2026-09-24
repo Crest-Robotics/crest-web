@@ -1,0 +1,21 @@
+# OpenSSL config for Caddy's intermediate CA.
+#
+# [req] is used by make-csr.sh. [v3_intermediate] holds the extensions the
+# company CA should put on the signed certificate (see README "TLS
+# certificates"):
+#   openssl x509 -req ... -extfile caddy/pki/intermediate.cnf -extensions v3_intermediate
+
+[ req ]
+distinguished_name = req_dn
+prompt             = no
+
+[ req_dn ]
+
+[ v3_intermediate ]
+basicConstraints       = critical, CA:TRUE, pathlen:0
+keyUsage               = critical, keyCertSign, cRLSign
+# Can only issue for crest.internal and its subdomains, and never for IP
+# addresses, so a leaked key can't mint certificates for anything else.
+nameConstraints        = critical, permitted;DNS:crest.internal, excluded;IP:0.0.0.0/0.0.0.0, excluded;IP:::/::
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always

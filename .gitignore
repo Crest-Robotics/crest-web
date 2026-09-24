@@ -1,1 +1,7 @@
 .env
+
+# CA material belongs in CADDY_PKI_DIR on caterpi, never in the repo.
+*.key
+*.crt
+*.csr
+*.srl

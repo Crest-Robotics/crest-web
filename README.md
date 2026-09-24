@@ -23,11 +23,13 @@ The top-level `compose.yaml` pins the project name (`crest-web`), defines the `c
 ```
 compose.yaml                  # Project name + include list — run this on the Pi
 caddy/compose.yaml            # Caddy reverse proxy
+caddy/pki/make-csr.sh         # Generates the intermediate CA key + CSR (run on caterpi)
+caddy/pki/intermediate.cnf    # OpenSSL config: CSR settings + extensions for signing
 registry/compose.yaml         # Private OCI registry
 .env.example                  # Required variables — copy to .env (gitignored)
 ```
 
-> **Don't change the project name or the `caddy-data` volume key.** The volume `crest-web_caddy-data` holds Caddy's internal CA root key. If it is recreated, every client's trusted CA stops working.
+> **Don't change the project name or the `caddy-data` volume key.** The volume `crest-web_caddy-data` holds Caddy's issued certificates and ACME state. Losing it isn't fatal, because certificates are re-issued from the intermediate in `CADDY_PKI_DIR`, but there's no reason to recreate it.
 
 ## Setup
 
@@ -43,7 +45,55 @@ Then add the wildcard DNS entry. In LuCI (**Network → DHCP and DNS → General
 
 Save and apply.
 
-### 2. Start the stack
+### 2. TLS certificates (company CA)
+
+Caddy issues a certificate for every `caddy.tls: internal` site from its own intermediate CA, signed by the Crest Robotics root CA. Clients only need to trust the company root. The intermediate is name-constrained: it can issue only for `crest.internal` and its subdomains, never for other domains or IP addresses.
+
+The files live on caterpi in `CADDY_PKI_DIR` (default `/etc/crest-pki`), outside the repo. They're mounted read-only into Caddy at `/pki`:
+
+| File | What | Secret? |
+|---|---|---|
+| `root.crt` | Crest Robotics root CA certificate | no |
+| `caddy-intermediate.key` | Intermediate private key (generated on caterpi, never leaves it) | **yes**, `600` |
+| `caddy-intermediate.csr` | Signing request sent to the company CA | no |
+| `caddy-intermediate.crt` | Signed intermediate certificate | no |
+
+**1. Generate the key and CSR on caterpi:**
+
+```sh
+sudo caddy/pki/make-csr.sh                  # writes to /etc/crest-pki; refuses to overwrite a key
+```
+
+**2. Sign the CSR with the company CA.** The certificate must carry the extensions in the `[v3_intermediate]` section of `caddy/pki/intermediate.cnf`:
+
+- `basicConstraints = critical, CA:TRUE, pathlen:0`
+- `keyUsage = critical, keyCertSign, cRLSign`
+- `nameConstraints = critical, permitted;DNS:crest.internal, excluded;IP:0.0.0.0/0.0.0.0, excluded;IP:::/::`
+
+With plain OpenSSL, on the machine holding the company CA key:
+
+```sh
+openssl x509 -req -in caddy-intermediate.csr \
+  -CA crest-root.crt -CAkey crest-root.key -CAcreateserial \
+  -days 730 -sha256 \
+  -extfile caddy/pki/intermediate.cnf -extensions v3_intermediate \
+  -out caddy-intermediate.crt
+```
+
+If the company CA signs from an issuing intermediate rather than the root, make `caddy-intermediate.crt` the full chain: the Caddy intermediate first, then the issuing intermediate. The issuing CA's own `pathlen` must allow one more level.
+
+**3. Install the results on caterpi and check them:**
+
+```sh
+sudo cp crest-root.crt /etc/crest-pki/root.crt
+sudo cp caddy-intermediate.crt /etc/crest-pki/caddy-intermediate.crt
+openssl verify -CAfile /etc/crest-pki/root.crt /etc/crest-pki/caddy-intermediate.crt
+openssl x509 -in /etc/crest-pki/caddy-intermediate.crt -noout -enddate -ext nameConstraints
+```
+
+> **Caddy never renews a supplied intermediate, and doesn't warn before it expires.** Once it expires, every site's certificate fails to verify. Put the `notAfter` date in the calendar and rotate a month or more ahead. To rotate: move the old key aside, re-run `make-csr.sh`, get the CSR signed, install it, and restart Caddy (`docker compose restart caddy`). Clients need no changes, because the root stays the same.
+
+### 3. Start the stack
 
 Configure the environment:
 
@@ -64,30 +114,26 @@ This creates the `crest-web` network, starts Caddy on ports 80/443 and starts th
 
 > `docker compose down` also removes the `crest-web` network. That fails while containers from other repos are still attached, and those services can't start again until this stack is back up.
 
-### 3. Trust Caddy's local CA
+### 4. Trust the Crest Robotics root CA
 
-Caddy issues TLS certificates using its built-in local CA. First copy the root cert from the container:
-
-```sh
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
-```
+Every client needs the company root certificate (`crest-root.crt`, the same file as `root.crt` above) in its trust store. Machines that already trust the company CA need nothing more.
 
 **Ubuntu**
 ```sh
-sudo cp caddy-root.crt /usr/local/share/ca-certificates/caddy-root.crt
+sudo cp crest-root.crt /usr/local/share/ca-certificates/crest-root.crt
 sudo update-ca-certificates
 ```
 
-> Firefox manages its own certificate store — import `caddy-root.crt` manually via **Settings → Privacy & Security → View Certificates → Authorities → Import**.
+> Firefox manages its own certificate store — import `crest-root.crt` manually via **Settings → Privacy & Security → View Certificates → Authorities → Import**.
 
 **macOS**
 ```sh
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain caddy-root.crt
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain crest-root.crt
 ```
 
 **Windows** (run in PowerShell as Administrator)
 ```powershell
-Import-Certificate -FilePath caddy-root.crt -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath crest-root.crt -CertStoreLocation Cert:\LocalMachine\Root
 ```
 
 ## Adding a service
@@ -136,13 +182,13 @@ A private OCI registry ([CNCF Distribution](https://distribution.github.io/distr
 
 ### Client trust
 
-The Docker daemon, not just your browser, must trust Caddy's root CA. Use either option:
+The Docker daemon, not just your browser, must trust the company root CA. Use either option:
 
-- Install `caddy-root.crt` into the system store (see [step 3](#3-trust-caddys-local-ca)), then **restart dockerd** (`sudo systemctl restart docker`).
+- Install `crest-root.crt` into the system store (see [step 4](#4-trust-the-crest-robotics-root-ca)), then **restart dockerd** (`sudo systemctl restart docker`).
 - Or install it for this registry only:
   ```sh
   sudo mkdir -p /etc/docker/certs.d/registry.crest.internal
-  sudo cp caddy-root.crt /etc/docker/certs.d/registry.crest.internal/ca.crt
+  sudo cp crest-root.crt /etc/docker/certs.d/registry.crest.internal/ca.crt
   ```
 
 **Podman** uses the system store, or `/etc/containers/certs.d/registry.crest.internal/ca.crt`.
@@ -153,7 +199,7 @@ The Docker daemon, not just your browser, must trust Caddy's root CA. Use either
 configs:
   registry.crest.internal:
     tls:
-      ca_file: /etc/ssl/certs/caddy-root.crt
+      ca_file: /etc/ssl/certs/crest-root.crt
     auth:
       username: <user>
       password: <password>

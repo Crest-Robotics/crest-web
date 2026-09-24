@@ -8,10 +8,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - caddy-data:/data
+      - ${CADDY_PKI_DIR:?set in .env}:/pki:ro
     networks:
       - crest-web
     labels:
       caddy.email: alex@crestrobotics.co
+      # `tls internal` certs are issued from a company-signed intermediate
+      # instead of Caddy's self-generated CA. Caddy never renews a supplied
+      # intermediate — see README "TLS certificates".
+      caddy.pki.ca: local
+      caddy.pki.ca.root.cert: /pki/root.crt
+      caddy.pki.ca.intermediate.cert: /pki/caddy-intermediate.crt
+      caddy.pki.ca.intermediate.key: /pki/caddy-intermediate.key
 
 volumes:
   caddy-data:

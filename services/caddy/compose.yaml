@@ -1,0 +1,20 @@
+services:
+  caddy:
+    image: lucaslorentz/caddy-docker-proxy:ci-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../data/caddy:/data
+      - ./pki:/pki:ro
+    networks:
+      - crest-web
+    labels:
+      caddy.email: alex@crestrobotics.co
+      # `tls internal` certs come from the root CA in ./pki (make-root.sh).
+      # Caddy creates and renews the intermediate itself.
+      caddy.pki.ca: local
+      caddy.pki.ca.root.cert: /pki/root.crt
+      caddy.pki.ca.root.key: /pki/root.key

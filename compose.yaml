@@ -1,8 +1,8 @@
 name: crest-web
 
 include:
-  - caddy/compose.yaml
-  - registry/compose.yaml
+  - services/caddy/compose.yaml
+  - services/registry/compose.yaml
 
 networks:
   crest-web:

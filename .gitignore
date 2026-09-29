@@ -1,7 +1,8 @@
 .env
 
-# CA material belongs in CADDY_PKI_DIR on caterpi, never in the repo.
+# Runtime data for each service (bind-mounted into its container).
+/data/
+
+# Root CA key and cert live in services/caddy/pki/ but are never committed.
 *.key
 *.crt
-*.csr
-*.srl

@@ -1,0 +1,17 @@
+# OpenSSL config for crest-web's root CA, used by make-root.sh.
+#
+# The root can only issue for crest.internal and its subdomains, and never for
+# IP addresses, so a leaked key can't mint certificates for anything else.
+# Caddy creates and renews its own intermediate from this root.
+
+[ req ]
+distinguished_name = req_dn
+prompt             = no
+
+[ req_dn ]
+
+[ v3_root ]
+basicConstraints     = critical, CA:TRUE, pathlen:1
+keyUsage             = critical, keyCertSign, cRLSign
+nameConstraints      = critical, permitted;DNS:crest.internal, excluded;IP:0.0.0.0/0.0.0.0, excluded;IP:::/::
+subjectKeyIdentifier = hash

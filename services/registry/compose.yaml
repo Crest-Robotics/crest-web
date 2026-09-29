@@ -6,7 +6,7 @@ services:
       REGISTRY_STORAGE_DELETE_ENABLED: "true"
       REGISTRY_HTTP_RELATIVEURLS: "true"
     volumes:
-      - ${REGISTRY_DATA_DIR:?set in .env}:/var/lib/registry
+      - ../../data/registry:/var/lib/registry
     networks:
       - crest-web
     healthcheck:

@@ -1,6 +1,6 @@
 # crest-web
 
-Caddy reverse proxy for `*.crest.internal` and a private container registry, running on `caterpi`.
+Caddy reverse proxy for `*.crest.internal`, a private container registry, and the Jira reporting service, running on `caterpi`.
 
 ```
 *.crest.internal (router dnsmasq wildcard → caterpi)
@@ -9,6 +9,7 @@ Caddy reverse proxy for `*.crest.internal` and a private container registry, run
         ↓
   crest-web Docker network            compose.yaml
   ├── registry.crest.internal         services/registry/
+  ├── reports.crest.internal          services/jira-reports/   (image from the jira-ops repo)
   └── any other service on the network, in this repo or another
 ```
 
@@ -23,6 +24,8 @@ services/caddy/compose.yaml       # Caddy
 services/caddy/pki/make-root.sh   # Generates the root CA (root.key + root.crt, gitignored)
 services/caddy/pki/ca.cnf         # OpenSSL settings for the root CA
 services/registry/compose.yaml    # Registry
+services/jira-reports/compose.yaml  # Jira reporting service (image built in jira-ops)
+services/jira-reports/secrets/    # Its Jira token (gitignored)
 data/<service>/                   # Runtime data for each service (gitignored)
 ```
 
@@ -169,6 +172,52 @@ docker push registry.crest.internal/my-image:1.0
    docker compose exec registry registry garbage-collect --delete-untagged /etc/distribution/config.yml
    ```
 
+## Jira reports
+
+The Jira reporting service at `https://reports.crest.internal`, e.g.
+`/reports/worklogs.csv?from=01-09-2026&to=30-09-2026` (no parameters = the active sprint).
+Its code and image live in the **jira-ops** repo, which builds it for arm64 and pushes it to the
+registry with `./publish-image`; this repo only runs it.
+
+- **Access:** Caddy handles TLS and the login (`basic_auth`). The app has no auth of its own,
+  so its port is never published: Caddy is the only way in.
+- **Token:** a Jira API token as a file secret, never in `.env`. Ideally a read-only token on a
+  dedicated account rather than a personal one, because anyone with the reports login reads Jira
+  through it.
+
+**Set up (once):**
+
+```sh
+# 1. Login and settings.
+docker run --rm -it caddy:2 caddy hash-password    # bcrypt hash for the reports login
+$EDITOR .env                                        # JIRA_REPORTS_USER, JIRA_REPORTS_PASSWORD_HASH (single quotes), JIRA_REPORTS_EMAIL
+
+# 2. The token: owner you, group 10001 (the container's user), mode 440, in a 700 directory.
+install -d -m 700 services/jira-reports/secrets
+(umask 077; read -rsp 'Jira API token: ' t && printf '%s' "$t" > services/jira-reports/secrets/jira_token; echo)
+sudo chgrp 10001 services/jira-reports/secrets/jira_token
+chmod 440 services/jira-reports/secrets/jira_token
+
+# 3. caterpi must be able to pull from its own registry: log in, with the root CA trusted by
+#    Docker (see "Trusting the root CA").
+docker login registry.crest.internal
+```
+
+**Deploy or update:**
+
+```sh
+docker compose pull jira-reports && docker compose up -d jira-reports
+docker compose ps jira-reports      # becomes "healthy" within ~30 s
+curl -s -o /dev/null -w '%{http_code}\n' --cacert services/caddy/pki/root.crt https://reports.crest.internal/reports/worklogs.csv   # expect 401
+```
+
+To pin a version, set `JIRA_REPORTS_TAG=<git short hash>` in `.env` (the tags `publish-image`
+pushes); otherwise it runs `latest`.
+
+**Changing the token:** write the new one the same way, re-run the `chgrp`/`chmod` (editors often
+drop the group), then `docker compose restart jira-reports`. If the container can't read the file
+it exits at startup, and `docker compose logs jira-reports` says `Permission denied`.
+
 ## Adding a service
 
 **Requirements:** the service joins the `crest-web` network and has the three Caddy labels:
@@ -209,6 +258,7 @@ Caddy picks up new containers automatically, with no reload needed.
 |---|---|---|
 | `services/caddy/pki/root.key`, `root.crt` | Root CA | Every client must trust a new root. **Back up the key.** |
 | `data/registry/` | Registry images | All pushed images are gone. |
+| `services/jira-reports/secrets/jira_token` | Jira API token for the reports service | Create a new token in Atlassian and put it back. |
 | `data/caddy/` | Caddy's intermediate CA and issued certificates | Harmless: regenerated from the root on start. |
 
 **Root expiry.** The root is valid for 10 years (`openssl x509 -in services/caddy/pki/root.crt -noout -enddate`). Caddy renews its intermediate and site certificates automatically.

@@ -3,6 +3,7 @@ name: crest-web
 include:
   - services/caddy/compose.yaml
   - services/registry/compose.yaml
+  - services/jira-reports/compose.yaml
 
 networks:
   crest-web:

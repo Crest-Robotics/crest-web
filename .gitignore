@@ -3,6 +3,9 @@
 # Runtime data for each service (bind-mounted into its container).
 /data/
 
+# Service secrets (e.g. services/jira-reports/secrets/jira_token) are never committed.
+services/*/secrets/
+
 # Root CA key and cert live in services/caddy/pki/ but are never committed.
 *.key
 *.crt

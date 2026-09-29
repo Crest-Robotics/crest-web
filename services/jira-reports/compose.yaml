@@ -1,0 +1,39 @@
+# Jira reporting web service (source: the jira-ops repo, which builds the image and pushes it
+# to registry.crest.internal with ./publish-image). https://reports.crest.internal
+#
+# Caddy does TLS and the login (basic_auth); the app has no auth of its own, so its port must
+# never be published. The Jira token is a file secret in ./secrets/ (see "Jira reports" in the
+# README for setup and permissions).
+services:
+  jira-reports:
+    image: registry.crest.internal/jira-reports:${JIRA_REPORTS_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      JIRA_EMAIL: ${JIRA_REPORTS_EMAIL:?set in .env}
+      JIRA_API_TOKEN_FILE: /run/secrets/jira_reports_token
+      JIRA_CLOUD_ID: 02af5490-6c7c-4bc7-ad03-0663c4873f78
+      TIMEZONE: Australia/Sydney
+      SPRINT_BOARD_ID: ${JIRA_REPORTS_SPRINT_BOARD_ID:-16}
+    secrets:
+      - jira_reports_token
+    # The image runs as UID/GID 10001, and the secret file must be readable by group 10001.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - crest-web
+    # List form, not a map: Compose doesn't interpolate map keys, and the
+    # basic_auth username lives in the key.
+    labels:
+      - caddy=reports.crest.internal
+      - caddy.reverse_proxy={{upstreams 8000}}
+      - caddy.tls=internal
+      - caddy.basic_auth.${JIRA_REPORTS_USER:?set in .env}=${JIRA_REPORTS_PASSWORD_HASH:?set in .env}
+
+secrets:
+  jira_reports_token:
+    file: ./secrets/jira_token
